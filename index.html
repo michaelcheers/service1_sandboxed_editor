@@ -1,75 +1,494 @@
-  <!DOCTYPE html>
-  <html>
-  <head>
-  <meta charset="utf-8">
-  <title>Editor</title>
-  <style>
-  html, body { margin: 0; padding: 0; height: 100%; }
-  body { box-sizing: border-box; }
-  iframe { width: 100%; height: 100%; border: none; display: block; }
-  </style>
-  </head>
-  <body>
-  <iframe id="inner" sandbox="allow-same-origin"
-    srcdoc='<!DOCTYPE html>
-  <html>
-  <head><meta charset="utf-8"></head>
-  <body contenteditable="true"
-        style="margin:0;padding:12px;min-height:100vh;box-sizing:border-box;font-family:system-ui,sans-serif;">
-  </body>
-  </html>'></iframe>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Editor</title>
+<style>
+html, body { margin: 0; padding: 0; height: 100%; }
+body { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+iframe { width: 100%; height: 100%; border: none; display: block; }
+.ed-modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+.ed-modal { background: #fff; border-radius: 10px; box-shadow: 0 12px 28px rgba(13,31,27,.18); padding: 14px 16px; width: 320px; box-sizing: border-box; }
+.ed-modal label { display: block; font-size: 11px; font-weight: 600; color: #6b7370; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; }
+.ed-modal input { width: 100%; height: 32px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0 10px; font-size: 13px; box-sizing: border-box; outline: none; }
+.ed-modal input:focus { border-color: #004D40; }
+.ed-modal .row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.ed-modal button { border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.ed-modal .cancel { background: #fff; border: 1px solid #d1d5db; color: #1f2937; }
+.ed-modal .ok { background: #004D40; color: #fff; border: none; font-weight: 600; }
+.ed-modal .err { color: #b91c1c; font-size: 11px; margin-top: 6px; min-height: 14px; }
+</style>
+</head>
+<body>
+<iframe id="inner" sandbox="allow-same-origin"
+  srcdoc='<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+html, body { margin:0; padding:0; min-height:100vh; }
+body { padding:12px; box-sizing:border-box; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; font-size:14px; line-height:1.5; color:#1a1a1a; outline:none; }
+body[data-empty="true"]::before { content: attr(data-placeholder); color:#9ca3af; pointer-events:none; position:absolute; }
+strong, b { font-weight: 700; }
+em, i { font-style: italic; }
+s { text-decoration: line-through; }
+h1 { font-size: 22px; margin: 12px 0 8px; }
+h2 { font-size: 18px; margin: 12px 0 6px; }
+h3 { font-size: 15px; margin: 10px 0 4px; }
+blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid #cbd2d0; color: #555; }
+code { background:#f0f0f0; padding:1px 5px; border-radius:3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+pre { background:#0d1f1b; color:#dff0eb; padding:10px 12px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; overflow:auto; }
+pre code { background:transparent; padding:0; color:inherit; }
+ul, ol { padding-left: 20px; margin: 6px 0; }
+a { color:#004D40; text-decoration: underline; }
+p { margin: 6px 0; }
+</style>
+</head>
+<body contenteditable="true" data-placeholder="" data-empty="true"></body>
+</html>'></iframe>
 
-  <script>
-  (function() {
-    var inner = document.getElementById("inner");
-    var loaded = false;
-    var pendingInit = null;
+<script>
+(function () {
+  var EDITOR_VERSION = "1392";
+  var inner = document.getElementById("inner");
+  var loaded = false;
+  var pendingInit = null;
 
-    inner.addEventListener("load", function() {
-      loaded = true;
-      if (pendingInit !== null) {
-        writeContent(pendingInit);
-        pendingInit = null;
-      }
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: "editor-ready" }, "*");
-      }
-    });
-
-    function writeContent(html) {
-      try {
-        inner.contentDocument.body.innerHTML = html || "";
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    function readContent() {
-      try {
-        return inner.contentDocument.body.innerHTML;
-      } catch (e) {
-        return null;
-      }
-    }
-
-    window.addEventListener("message", function(e) {
-      var msg = e.data;
-      if (!msg || typeof msg !== "object") return;
-
-      if (msg.type === "set-content") {
-        if (!loaded) {
-          pendingInit = msg.html;
-          return;
-        }
-        var ok = writeContent(msg.html || "");
-        if (e.source) e.source.postMessage({ type: "content-set", ok: ok }, e.origin);
-      } else if (msg.type === "get-content") {
-        var html = readContent();
-        if (e.source) e.source.postMessage({ type: "content", html: html }, e.origin);
-      }
-    });
+  // Resolve the parent's origin so postMessage targets it explicitly.
+  // ancestorOrigins is reliable on Chromium; document.referrer is the fallback.
+  var PARENT_ORIGIN = (function () {
+    try {
+      var ao = window.location.ancestorOrigins;
+      if (ao && ao.length) return ao[0];
+    } catch (_) {}
+    try {
+      if (document.referrer) return new URL(document.referrer).origin;
+    } catch (_) {}
+    return null;
   })();
-  </script>
-  </body>
-  </html>
+  // Normalize a user-entered link target. Strip C0 controls + whitespace
+  // (the URL parser ignores them inside the scheme anyway), then auto-prepend
+  // https:// when there's no scheme. Returns null if the result is not in the
+  // allowlist (http, https, mailto, tel).
+  function normalizeLinkHref(href) {
+    var s = String(href == null ? "" : href).trimStart();
+    if (!s) return null;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = "https://" + s;
+    return /^(https?|mailto|tel|data):/i.test(s) ? s : null;
+  }
+
+  function doc() { return inner.contentDocument; }
+  function body() { return doc() && doc().body; }
+  function win() { return inner.contentWindow; }
+
+  // ---- Content I/O ----
+  function writeContent(html) {
+    try {
+      var b = body();
+      if (!b) return false;
+      b.innerHTML = String(html == null ? "" : html);
+      updateEmptyFlag();
+      clearUndo();
+      pushUndo();
+      return true;
+    } catch (e) { return false; }
+  }
+  function readContent() { try { return body() ? body().innerHTML : ""; } catch (e) { return ""; } }
+
+  function updateEmptyFlag() {
+    var b = body(); if (!b) return;
+    var txt = b.textContent.replace(/\s/g, "");
+    var hasBlock = b.querySelector("img, br, ul, ol, h1, h2, h3, blockquote, pre");
+    b.setAttribute("data-empty", (txt === "" && !hasBlock) ? "true" : "false");
+  }
+
+  // ---- Selection ----
+  function getSel() { return win().getSelection(); }
+  function rng() { var s = getSel(); return (s && s.rangeCount) ? s.getRangeAt(0) : null; }
+
+  function placeCaret(node, atEnd) {
+    var r = doc().createRange();
+    r.selectNodeContents(node);
+    r.collapse(!atEnd);
+    var s = getSel();
+    s.removeAllRanges();
+    s.addRange(r);
+  }
+
+  function ensureSelectionInBody() {
+    var b = body();
+    var r = rng();
+    if (!r || !b.contains(r.commonAncestorContainer)) {
+      placeCaret(b, true);
+    }
+  }
+
+  // ---- Block helpers ----
+  var BLOCK_TAGS = { P:1, H1:1, H2:1, H3:1, BLOCKQUOTE:1, PRE:1, LI:1, DIV:1 };
+
+  function currentBlock() {
+    var b = body();
+    var r = rng();
+    if (!r) return null;
+    var n = r.startContainer;
+    if (n.nodeType === 3) n = n.parentNode;
+    while (n && n !== b) {
+      if (BLOCK_TAGS[n.tagName]) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+
+  function replaceBlockTag(block, newTag) {
+    if (!block) return null;
+    var nb = doc().createElement(newTag);
+    while (block.firstChild) nb.appendChild(block.firstChild);
+    block.parentNode.replaceChild(nb, block);
+    placeCaret(nb, true);
+    return nb;
+  }
+
+  function wrapBlockWith(block, wrapperTag) {
+    var w = doc().createElement(wrapperTag);
+    block.parentNode.insertBefore(w, block);
+    w.appendChild(block);
+    return w;
+  }
+
+  function unwrap(el) {
+    while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+    el.parentNode.removeChild(el);
+  }
+
+  function ancestorOfTag(node, tag) {
+    var b = body();
+    while (node && node !== b) {
+      if (node.nodeType === 1 && node.tagName === tag) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  // ---- exec commands ----
+  function execCmd(cmd, value) {
+    var b = body();
+    if (!b) return false;
+    b.focus();
+    ensureSelectionInBody();
+    try {
+      switch (cmd) {
+        case "bold":   return doc().execCommand("bold", false, null);
+        case "italic": return doc().execCommand("italic", false, null);
+        case "strike": return doc().execCommand("strikeThrough", false, null);
+        case "link": {
+          if (value && value.href) {
+            var safe = normalizeLinkHref(value.href);
+            if (!safe) return false;
+            return doc().execCommand("createLink", false, safe);
+          }
+          return doc().execCommand("unlink", false, null);
+        }
+        case "heading": {
+          var block = currentBlock();
+          if (!block) return false;
+          var t = block.tagName;
+          var next = (t === "H2") ? "H3" : (t === "H3" ? "P" : "H2");
+          // If inside a list, lift out first.
+          if (t === "LI") {
+            // outdent first then replace
+            outdentBlock();
+            block = currentBlock();
+            if (!block) return false;
+            t = block.tagName;
+            next = (t === "H2") ? "H3" : (t === "H3" ? "P" : "H2");
+          }
+          replaceBlockTag(block, next);
+          return true;
+        }
+        case "quote": {
+          var bl = currentBlock();
+          if (!bl) return false;
+          var bq = ancestorOfTag(bl, "BLOCKQUOTE");
+          if (bq) { unwrap(bq); return true; }
+          wrapBlockWith(bl, "BLOCKQUOTE");
+          return true;
+        }
+        case "code": {
+          var r = rng();
+          if (!r) return false;
+          if (r.collapsed) {
+            // Block <pre><code>
+            var bl2 = currentBlock();
+            if (!bl2) return false;
+            if (bl2.tagName === "PRE") {
+              // unwrap pre>code back to p
+              var inner = bl2.querySelector("code") || bl2;
+              var p = doc().createElement("p");
+              while (inner.firstChild) p.appendChild(inner.firstChild);
+              bl2.parentNode.replaceChild(p, bl2);
+              placeCaret(p, true);
+              return true;
+            }
+            var pre = doc().createElement("pre");
+            var c = doc().createElement("code");
+            while (bl2.firstChild) c.appendChild(bl2.firstChild);
+            pre.appendChild(c);
+            bl2.parentNode.replaceChild(pre, bl2);
+            placeCaret(c, true);
+            return true;
+          } else {
+            // inline <code>
+            var anc = ancestorOfTag(r.startContainer.nodeType === 3 ? r.startContainer.parentNode : r.startContainer, "CODE");
+            if (anc) { unwrap(anc); return true; }
+            var sel = r.extractContents();
+            var ce = doc().createElement("code");
+            ce.appendChild(sel);
+            r.insertNode(ce);
+            // restore selection around code
+            var nr = doc().createRange();
+            nr.selectNodeContents(ce);
+            getSel().removeAllRanges();
+            getSel().addRange(nr);
+            return true;
+          }
+        }
+        case "bullet-list": return doc().execCommand("insertUnorderedList", false, null);
+        case "numbered-list": return doc().execCommand("insertOrderedList", false, null);
+        case "outdent": return outdentBlock();
+        case "indent": return doc().execCommand("indent", false, null);
+        case "attach": return "attach";
+        case "undo": return doUndo();
+        case "redo": return doRedo();
+        default: return false;
+      }
+    } catch (e) { return false; }
+  }
+
+  function outdentBlock() {
+    // Strip enclosing blockquote layer if present; otherwise execCommand("outdent")
+    var bl = currentBlock();
+    if (bl) {
+      var bq = ancestorOfTag(bl, "BLOCKQUOTE");
+      if (bq) { unwrap(bq); return true; }
+    }
+    return doc().execCommand("outdent", false, null);
+  }
+
+  // ---- Undo/Redo ----
+  var undoStack = [];
+  var redoStack = [];
+  var MAX_UNDO = 50;
+  var lastSnapshotHtml = "";
+
+  function snapshot() {
+    return { html: readContent() };
+  }
+  function pushUndo() {
+    var s = snapshot();
+    if (s.html === lastSnapshotHtml) return;
+    undoStack.push(s);
+    lastSnapshotHtml = s.html;
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+  }
+  function clearUndo() { undoStack.length = 0; redoStack.length = 0; lastSnapshotHtml = ""; }
+  function doUndo() {
+    if (undoStack.length < 2) return false;
+    var current = undoStack.pop();
+    redoStack.push(current);
+    var prev = undoStack[undoStack.length - 1];
+    restore(prev);
+    lastSnapshotHtml = prev.html;
+    return true;
+  }
+  function doRedo() {
+    if (!redoStack.length) return false;
+    var s = redoStack.pop();
+    undoStack.push(s);
+    restore(s);
+    lastSnapshotHtml = s.html;
+    return true;
+  }
+  function restore(s) {
+    var b = body();
+    b.innerHTML = s.html;
+    placeCaret(b, true);
+    updateEmptyFlag();
+  }
+
+  // ---- State probe ----
+  function computeState() {
+    var b = body(); if (!b) return {};
+    var r = rng();
+    var n = null;
+    if (r) {
+      n = r.startContainer;
+      if (n && n.nodeType === 3) n = n.parentNode;
+    }
+    function hasAnc(tag) { return !!ancestorOfTag(n, tag); }
+    var bold = false, italic = false, strike = false;
+    try { bold = doc().queryCommandState("bold"); } catch (_) {}
+    try { italic = doc().queryCommandState("italic"); } catch (_) {}
+    try { strike = doc().queryCommandState("strikeThrough"); } catch (_) {}
+    return {
+      bold: !!bold,
+      italic: !!italic,
+      strike: !!strike,
+      h1: hasAnc("H1"),
+      h2: hasAnc("H2"),
+      h3: hasAnc("H3"),
+      heading: hasAnc("H1") || hasAnc("H2") || hasAnc("H3"),
+      blockquote: hasAnc("BLOCKQUOTE"),
+      code: hasAnc("CODE") || hasAnc("PRE"),
+      ul: hasAnc("UL"),
+      ol: hasAnc("OL"),
+      "bullet-list": hasAnc("UL"),
+      "numbered-list": hasAnc("OL"),
+      link: hasAnc("A")
+    };
+  }
+
+  function openLinkModal() {
+    var existing = document.querySelector(".ed-modal-bg");
+    if (existing) { existing.remove(); }
+    var bg = document.createElement("div"); bg.className = "ed-modal-bg";
+    var modal = document.createElement("div"); modal.className = "ed-modal";
+    var label = document.createElement("label"); label.textContent = "Add link";
+    var input = document.createElement("input"); input.type = "text"; input.placeholder = "https:// or example.com";
+    var err = document.createElement("div"); err.className = "err";
+    var row = document.createElement("div"); row.className = "row";
+    var cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "cancel"; cancel.textContent = "Cancel";
+    var ok = document.createElement("button"); ok.type = "button"; ok.className = "ok"; ok.textContent = "Add";
+    row.appendChild(cancel); row.appendChild(ok);
+    modal.appendChild(label); modal.appendChild(input); modal.appendChild(err); modal.appendChild(row);
+    bg.appendChild(modal);
+    document.body.appendChild(bg);
+    setTimeout(function () { input.focus(); }, 0);
+
+    function close() { if (bg.parentNode) bg.parentNode.removeChild(bg); }
+    function submit() {
+      var v = input.value.trim();
+      if (!v) { execCmd("link"); close(); return; }
+      var safe = normalizeLinkHref(v);
+      if (!safe) { err.textContent = "Only http, https, mailto, tel, data URLs are allowed."; return; }
+      execCmd("link", { href: safe });
+      close();
+    }
+    cancel.addEventListener("click", close);
+    ok.addEventListener("click", submit);
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); submit(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); close(); }
+    });
+    bg.addEventListener("click", function (ev) { if (ev.target === bg) close(); });
+  }
+
+  function snapshotForUndo() {
+    updateEmptyFlag();
+    pushUndo();
+  }
+
+  function setPlaceholder(text) {
+    var b = body(); if (!b) return;
+    b.setAttribute("data-placeholder", String(text || ""));
+    updateEmptyFlag();
+  }
+
+  function focusEditor() {
+    try { body().focus(); ensureSelectionInBody(); } catch (_) {}
+  }
+
+  function insertHtmlAtCaret(html) {
+    var b = body();
+    b.focus();
+    ensureSelectionInBody();
+    try { doc().execCommand("insertHTML", false, String(html || "")); } catch (_) {}
+    snapshotForUndo();
+  }
+
+  function insertTextAtCaret(text) {
+    try { doc().execCommand("insertText", false, String(text || "")); }
+    catch (_) {
+      var b = body(); b.focus(); ensureSelectionInBody();
+      var r = rng();
+      if (r) {
+        r.deleteContents();
+        r.insertNode(doc().createTextNode(String(text || "")));
+      }
+    }
+    snapshotForUndo();
+  }
+
+  // ---- Init ----
+  inner.addEventListener("load", function () {
+    loaded = true;
+    var d = doc(), b = body();
+
+    // Intercept Tab inside lists for indent; Ctrl/Cmd-Z / Ctrl/Cmd-Y for undo/redo
+    b.addEventListener("keydown", function (e) {
+      if (e.key === "Tab") {
+        var li = ancestorOfTag(rng() && rng().startContainer.nodeType === 3 ? rng().startContainer.parentNode : (rng() && rng().startContainer), "LI");
+        if (li) {
+          e.preventDefault();
+          execCmd(e.shiftKey ? "outdent" : "indent");
+        }
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault(); execCmd("undo");
+      } else if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && (e.key === "z" || e.key === "Z")) || e.key === "y" || e.key === "Y")) {
+        e.preventDefault(); execCmd("redo");
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        openLinkModal();
+      }
+    });
+
+    // Seed pending init
+    if (pendingInit !== null) {
+      writeContent(pendingInit);
+      pendingInit = null;
+    } else {
+      pushUndo();
+    }
+
+    if (window.parent !== window) {
+      if (PARENT_ORIGIN) window.parent.postMessage({ type: "editor-ready", version: EDITOR_VERSION }, PARENT_ORIGIN);
+    }
+  });
+
+  window.addEventListener("message", function (e) {
+    if (e.source !== window.parent) return;
+    if (!PARENT_ORIGIN || e.origin !== PARENT_ORIGIN) return;
+    var msg = e.data;
+    if (!msg || typeof msg !== "object") return;
+
+    function toParent(m) {
+      if (!PARENT_ORIGIN) return;
+      try { if (window.parent !== window) window.parent.postMessage(m, PARENT_ORIGIN); } catch (_) {}
+    }
+
+    if (msg.type === "set-content") {
+      if (!loaded) { pendingInit = msg.html; return; }
+      var ok = writeContent(msg.html || "");
+      toParent({ type: "content-set", ok: ok });
+    } else if (msg.type === "get-content") {
+      toParent({ type: "content", html: readContent() });
+    } else if (msg.type === "exec") {
+      var ok2 = execCmd(String(msg.command || ""), msg.value);
+      toParent({ type: "exec-result", command: msg.command, ok: !!ok2, active: computeState() });
+      if (ok2 === "attach") toParent({ type: "attach-request" });
+    } else if (msg.type === "insert-text") {
+      insertTextAtCaret(msg.text || "");
+    } else if (msg.type === "insert-html") {
+      insertHtmlAtCaret(msg.html || "");
+    } else if (msg.type === "focus") {
+      focusEditor();
+    } else if (msg.type === "query-state") {
+      toParent({ type: "state", active: computeState() });
+    } else if (msg.type === "set-placeholder") {
+      setPlaceholder(msg.text || "");
+    }
+  });
+})();
+</script>
+</body>
+</html>
