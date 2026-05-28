@@ -98,7 +98,7 @@ p { margin: 6px 0; }
   function updateEmptyFlag() {
     var b = body(); if (!b) return;
     var txt = b.textContent.replace(/\s/g, "");
-    var hasBlock = b.querySelector("img, br, ul, ol, h1, h2, h3, blockquote, pre");
+    var hasBlock = b.querySelector("img, ul, ol, h1, h2, h3, blockquote, pre");
     b.setAttribute("data-empty", (txt === "" && !hasBlock) ? "true" : "false");
   }
 
